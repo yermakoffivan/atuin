@@ -267,14 +267,8 @@ fn add_hook_entries(hooks: &mut Value, agent: &Agent) -> Result<()> {
             .ok_or_else(|| eyre::eyre!("hooks.{event_type} is not an array"))?;
 
         let already_installed = arr.iter().any(|entry| {
-            entry
-                .get("hooks")
-                .and_then(Value::as_array)
-                .is_some_and(|hooks| {
-                    hooks.iter().any(|hook| {
-                        HookCommand::deserialize(hook).is_ok_and(|hook| hook.command == hook_command)
-                    })
-                })
+            HookMatcher::deserialize(entry)
+                .is_ok_and(|entry| entry.hooks.iter().any(|hook| hook.command == hook_command))
         });
 
         if already_installed {

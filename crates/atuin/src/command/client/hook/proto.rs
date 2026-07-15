@@ -76,12 +76,32 @@ pub struct WireToolResponse {
 /// when it matches. This is the shape Atuin writes into (and looks for in) the
 /// agent config file (`~/.claude/settings.json`, `~/.codex/hooks.json`).
 ///
-/// Deserialization is permissive (unknown keys ignored) because the array also
-/// holds entries other tools installed, which we must read past without error.
+/// Deserialization is deliberately **partial**: the array Atuin scans also holds
+/// entries other tools installed, so unknown keys are ignored, and — via
+/// [`deserialize_partial_hooks`] — any element of `hooks` that does not fit
+/// [`HookCommand`] is dropped rather than failing the whole entry. This keeps
+/// detection per-hook: a single malformed sibling hook can't hide the atuin hook
+/// living beside it. Serialization is unaffected — Atuin only ever writes
+/// well-formed entries.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HookMatcher {
     pub matcher: String,
+    #[serde(deserialize_with = "deserialize_partial_hooks")]
     pub hooks: Vec<HookCommand>,
+}
+
+/// Deserialize a `hooks` array, keeping only the elements that decode as a
+/// [`HookCommand`] and silently dropping the rest. Foreign tools may add hooks
+/// in shapes we don't model; those must not abort reading the array.
+fn deserialize_partial_hooks<'de, D>(deserializer: D) -> Result<Vec<HookCommand>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(raw
+        .iter()
+        .filter_map(|value| HookCommand::deserialize(value).ok())
+        .collect())
 }
 
 /// A single command hook. `kind` serializes as the `"type"` field and is always
@@ -380,5 +400,22 @@ mod tests {
 
         let entry: HookMatcher = serde_json::from_value(value).unwrap();
         assert_eq!(entry.hooks[0].command, "some-other-tool");
+    }
+
+    #[test]
+    fn hook_matcher_drops_malformed_sibling_hooks() {
+        // A hook missing the required "type" field must be dropped rather than
+        // failing the whole entry, so atuin's own hook beside it is still seen.
+        let value = serde_json::json!({
+            "matcher": "Bash",
+            "hooks": [
+                {"command": "no-type-field"},
+                {"type": "command", "command": "atuin hook claude-code"}
+            ]
+        });
+
+        let entry: HookMatcher = serde_json::from_value(value).unwrap();
+        assert_eq!(entry.hooks.len(), 1);
+        assert_eq!(entry.hooks[0].command, "atuin hook claude-code");
     }
 }
