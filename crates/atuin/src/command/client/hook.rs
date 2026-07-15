@@ -5,6 +5,7 @@ use atuin_client::settings::Settings;
 use atuin_common::utils::home_dir;
 use clap::{Parser, Subcommand};
 use eyre::{Result, bail};
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::history;
@@ -266,8 +267,14 @@ fn add_hook_entries(hooks: &mut Value, agent: &Agent) -> Result<()> {
             .ok_or_else(|| eyre::eyre!("hooks.{event_type} is not an array"))?;
 
         let already_installed = arr.iter().any(|entry| {
-            serde_json::from_value::<HookMatcher>(entry.clone())
-                .is_ok_and(|entry| entry.hooks.iter().any(|hook| hook.command == hook_command))
+            entry
+                .get("hooks")
+                .and_then(Value::as_array)
+                .is_some_and(|hooks| {
+                    hooks.iter().any(|hook| {
+                        HookCommand::deserialize(hook).is_ok_and(|hook| hook.command == hook_command)
+                    })
+                })
         });
 
         if already_installed {
@@ -344,5 +351,46 @@ mod tests {
             AtuinCmd::Client(client::Cmd::Hook(Cmd { action: None, agent: Some(agent) }))
                 if agent == "codex"
         ));
+    }
+
+    #[test]
+    fn add_hook_entries_is_idempotent() {
+        let agent = Agent::from_name("claude-code").unwrap();
+        let mut hooks = serde_json::json!({});
+
+        add_hook_entries(&mut hooks, &agent).unwrap();
+        add_hook_entries(&mut hooks, &agent).unwrap();
+
+        for event_type in HOOK_EVENT_TYPES {
+            let arr = hooks[*event_type].as_array().unwrap();
+            assert_eq!(arr.len(), 1, "duplicate entry added for {event_type}");
+        }
+    }
+
+    #[test]
+    fn add_hook_entries_detects_installed_despite_malformed_sibling() {
+        let agent = Agent::from_name("claude-code").unwrap();
+        // Atuin's own command hook sharing a matcher entry with a foreign hook
+        // that lacks the "type" field, as a user or another tool might merge.
+        // The old whole-entry deserialize would fail here and duplicate; the
+        // per-hook scan must still detect the existing atuin hook.
+        let mut hooks = serde_json::json!({
+            "PreToolUse": [{
+                "matcher": "Bash",
+                "hooks": [
+                    {"type": "command", "command": "atuin hook claude-code"},
+                    {"command": "some-other-tool"}
+                ]
+            }]
+        });
+
+        add_hook_entries(&mut hooks, &agent).unwrap();
+
+        let arr = hooks["PreToolUse"].as_array().unwrap();
+        assert_eq!(
+            arr.len(),
+            1,
+            "should detect the existing atuin hook and not duplicate it"
+        );
     }
 }
