@@ -140,8 +140,11 @@ async fn handle(agent_name: &str, settings: &Settings) -> Result<()> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
 
-    // Total: empty or unparseable input reduces to `Skip`, so no early guard.
-    match parse_hook_stdin(&input) {
+    if input.trim().is_empty() {
+        return Ok(());
+    }
+
+    match parse_hook_stdin(&input)? {
         HookEvent::Start {
             command,
             intent,

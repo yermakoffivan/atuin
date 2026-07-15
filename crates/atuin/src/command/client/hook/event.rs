@@ -7,6 +7,9 @@
 //! `tool_use_id` is required, and a `PostToolUseFailure` is normalized to exit
 //! status 1.
 
+use eyre::Result;
+use serde_json::error::Category;
+
 use super::proto::{BASH_TOOL_NAME, HookEventName, WireHookEvent};
 
 /// The reduced event the hook command acts on.
@@ -74,11 +77,19 @@ impl From<WireHookEvent> for HookEvent {
 }
 
 /// Parse a raw hook payload (the JSON an agent writes to stdin) into a
-/// [`HookEvent`]. Total: a payload that doesn't fit the hook-event schema —
-/// invalid JSON, a missing required field, a wrong-typed field — is nothing we
-/// can act on, so it becomes [`HookEvent::Skip`] rather than an error.
-pub fn parse_hook_stdin(input: &str) -> HookEvent {
-    serde_json::from_str::<WireHookEvent>(input).map_or(HookEvent::Skip, HookEvent::from)
+/// [`HookEvent`].
+///
+/// Well-formed JSON that doesn't fit the hook-event schema — a missing required
+/// field, a wrong-typed field, a value that isn't even an object — is not an
+/// event we handle, so it reduces to [`HookEvent::Skip`]. Only *malformed* JSON
+/// (a syntax error or truncated input) is surfaced as an error: an agent could
+/// never send that legitimately, so it signals a real fault worth seeing.
+pub fn parse_hook_stdin(input: &str) -> Result<HookEvent> {
+    match serde_json::from_str::<WireHookEvent>(input) {
+        Ok(wire) => Ok(wire.into()),
+        Err(err) if err.classify() == Category::Data => Ok(HookEvent::Skip),
+        Err(err) => Err(err.into()),
+    }
 }
 
 #[cfg(test)]
@@ -237,21 +248,28 @@ mod tests {
         HookEvent::Skip
     )]
     fn parses_agent_event(#[case] input: serde_json::Value, #[case] expected: HookEvent) {
-        assert_eq!(parse_hook_stdin(&input.to_string()), expected);
+        assert_eq!(parse_hook_stdin(&input.to_string()).unwrap(), expected);
     }
 
-    /// A payload that doesn't fit the schema — not JSON, or JSON that isn't a
-    /// hook event — is nothing we can act on, so it is skipped, not an error.
+    /// Well-formed JSON that isn't a hook event we model is skipped, not an
+    /// error — it decodes cleanly as JSON but doesn't fit the schema.
     #[rstest]
-    #[case::not_json("not json")]
-    #[case::truncated(r#"{"tool_name":"#)]
     #[case::json_but_not_an_object("42")]
     #[case::missing_required_fields(r#"{"tool_name": "Bash"}"#)]
     #[case::wrong_typed_tool_use_id(
         r#"{"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_use_id": 5, "tool_input": {"command": "ls"}}"#
     )]
-    fn unfit_payloads_are_skipped(#[case] input: &str) {
-        assert_eq!(parse_hook_stdin(input), HookEvent::Skip);
+    fn well_formed_non_events_are_skipped(#[case] input: &str) {
+        assert_eq!(parse_hook_stdin(input).unwrap(), HookEvent::Skip);
+    }
+
+    /// Malformed JSON is a genuine fault an agent could never send by design,
+    /// so it surfaces as an error rather than being silently dropped.
+    #[rstest]
+    #[case::not_json("not json")]
+    #[case::truncated(r#"{"tool_name":"#)]
+    fn malformed_json_is_an_error(#[case] input: &str) {
+        assert!(parse_hook_stdin(input).is_err());
     }
 
     proptest! {
@@ -277,7 +295,7 @@ mod tests {
             });
 
             prop_assert_eq!(
-                parse_hook_stdin(&input.to_string()),
+                parse_hook_stdin(&input.to_string()).unwrap(),
                 HookEvent::Start { command, intent: description, tool_use_id }
             );
         }
@@ -296,7 +314,7 @@ mod tests {
             });
 
             prop_assert_eq!(
-                parse_hook_stdin(&input.to_string()),
+                parse_hook_stdin(&input.to_string()).unwrap(),
                 HookEvent::End { tool_use_id, exit }
             );
         }
@@ -316,7 +334,7 @@ mod tests {
             });
 
             prop_assert_eq!(
-                parse_hook_stdin(&input.to_string()),
+                parse_hook_stdin(&input.to_string()).unwrap(),
                 HookEvent::End { tool_use_id, exit: 1 }
             );
         }
@@ -338,7 +356,7 @@ mod tests {
                 "tool_use_id": tool_use_id,
             });
 
-            prop_assert_eq!(parse_hook_stdin(&input.to_string()), HookEvent::Skip);
+            prop_assert_eq!(parse_hook_stdin(&input.to_string()).unwrap(), HookEvent::Skip);
         }
     }
 }
