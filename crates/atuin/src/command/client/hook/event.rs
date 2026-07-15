@@ -76,19 +76,22 @@ impl From<WireHookEvent> for HookEvent {
     }
 }
 
-/// Parse a raw hook payload (the JSON an agent writes to stdin) into a
-/// [`HookEvent`].
-///
-/// Well-formed JSON that doesn't fit the hook-event schema — a missing required
-/// field, a wrong-typed field, a value that isn't even an object — is not an
-/// event we handle, so it reduces to [`HookEvent::Skip`]. Only *malformed* JSON
-/// (a syntax error or truncated input) is surfaced as an error: an agent could
-/// never send that legitimately, so it signals a real fault worth seeing.
-pub fn parse_hook_stdin(input: &str) -> Result<HookEvent> {
-    match serde_json::from_str::<WireHookEvent>(input) {
-        Ok(wire) => Ok(wire.into()),
-        Err(err) if err.classify() == Category::Data => Ok(HookEvent::Skip),
-        Err(err) => Err(err.into()),
+impl HookEvent {
+    /// Parse a raw hook payload (the JSON an agent writes to stdin) into a
+    /// `HookEvent`.
+    ///
+    /// Well-formed JSON that doesn't fit the hook-event schema — a missing
+    /// required field, a wrong-typed field, a value that isn't even an object —
+    /// is not an event we handle, so it reduces to [`HookEvent::Skip`]. Only
+    /// *malformed* JSON (a syntax error or truncated input) is surfaced as an
+    /// error: an agent could never send that legitimately, so it signals a real
+    /// fault worth seeing.
+    pub fn from_json_str(input: &str) -> Result<Self> {
+        match serde_json::from_str::<WireHookEvent>(input) {
+            Ok(wire) => Ok(wire.into()),
+            Err(err) if err.classify() == Category::Data => Ok(Self::Skip),
+            Err(err) => Err(err.into()),
+        }
     }
 }
 
@@ -248,7 +251,7 @@ mod tests {
         HookEvent::Skip
     )]
     fn parses_agent_event(#[case] input: serde_json::Value, #[case] expected: HookEvent) {
-        assert_eq!(parse_hook_stdin(&input.to_string()).unwrap(), expected);
+        assert_eq!(HookEvent::from_json_str(&input.to_string()).unwrap(), expected);
     }
 
     /// Well-formed JSON that isn't a hook event we model is skipped, not an
@@ -260,7 +263,7 @@ mod tests {
         r#"{"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_use_id": 5, "tool_input": {"command": "ls"}}"#
     )]
     fn well_formed_non_events_are_skipped(#[case] input: &str) {
-        assert_eq!(parse_hook_stdin(input).unwrap(), HookEvent::Skip);
+        assert_eq!(HookEvent::from_json_str(input).unwrap(), HookEvent::Skip);
     }
 
     /// Malformed JSON is a genuine fault an agent could never send by design,
@@ -269,7 +272,7 @@ mod tests {
     #[case::not_json("not json")]
     #[case::truncated(r#"{"tool_name":"#)]
     fn malformed_json_is_an_error(#[case] input: &str) {
-        assert!(parse_hook_stdin(input).is_err());
+        assert!(HookEvent::from_json_str(input).is_err());
     }
 
     proptest! {
@@ -295,7 +298,7 @@ mod tests {
             });
 
             prop_assert_eq!(
-                parse_hook_stdin(&input.to_string()).unwrap(),
+                HookEvent::from_json_str(&input.to_string()).unwrap(),
                 HookEvent::Start { command, intent: description, tool_use_id }
             );
         }
@@ -314,7 +317,7 @@ mod tests {
             });
 
             prop_assert_eq!(
-                parse_hook_stdin(&input.to_string()).unwrap(),
+                HookEvent::from_json_str(&input.to_string()).unwrap(),
                 HookEvent::End { tool_use_id, exit }
             );
         }
@@ -334,7 +337,7 @@ mod tests {
             });
 
             prop_assert_eq!(
-                parse_hook_stdin(&input.to_string()).unwrap(),
+                HookEvent::from_json_str(&input.to_string()).unwrap(),
                 HookEvent::End { tool_use_id, exit: 1 }
             );
         }
@@ -356,7 +359,7 @@ mod tests {
                 "tool_use_id": tool_use_id,
             });
 
-            prop_assert_eq!(parse_hook_stdin(&input.to_string()).unwrap(), HookEvent::Skip);
+            prop_assert_eq!(HookEvent::from_json_str(&input.to_string()).unwrap(), HookEvent::Skip);
         }
     }
 }

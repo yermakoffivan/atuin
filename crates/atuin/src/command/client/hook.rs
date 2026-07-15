@@ -11,10 +11,11 @@ use serde_json::Value;
 use super::history;
 
 mod event;
+mod install;
 mod proto;
 
-use event::{HookEvent, parse_hook_stdin};
-use proto::{HookCommand, HookMatcher};
+use event::HookEvent;
+use install::{HookCommand, HookMatcher};
 
 const HOOK_EVENT_TYPES: &[&str] = &["PreToolUse", "PostToolUse", "PostToolUseFailure"];
 const PI_EXTENSION_SOURCE: &str = include_str!("../../../contrib/pi/atuin.ts");
@@ -144,7 +145,7 @@ async fn handle(agent_name: &str, settings: &Settings) -> Result<()> {
         return Ok(());
     }
 
-    match parse_hook_stdin(&input)? {
+    match HookEvent::from_json_str(&input)? {
         HookEvent::Start {
             command,
             intent,
