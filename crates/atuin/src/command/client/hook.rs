@@ -11,7 +11,7 @@ use super::history;
 
 mod proto;
 
-use proto::{HookEvent, parse_hook_stdin};
+use proto::{HookCommand, HookEvent, HookMatcher, parse_hook_stdin};
 
 const HOOK_EVENT_TYPES: &[&str] = &["PreToolUse", "PostToolUse", "PostToolUseFailure"];
 const PI_EXTENSION_SOURCE: &str = include_str!("../../../contrib/pi/atuin.ts");
@@ -252,6 +252,8 @@ fn add_hook_entries(hooks: &mut Value, agent: &Agent) -> Result<()> {
         bail!("agent does not use JSON hooks")
     };
 
+    let (matcher, hook_command) = (*matcher, *hook_command);
+
     for event_type in HOOK_EVENT_TYPES {
         let event_hooks = hooks
             .as_object_mut()
@@ -264,10 +266,8 @@ fn add_hook_entries(hooks: &mut Value, agent: &Agent) -> Result<()> {
             .ok_or_else(|| eyre::eyre!("hooks.{event_type} is not an array"))?;
 
         let already_installed = arr.iter().any(|entry| {
-            entry["hooks"].as_array().is_some_and(|h| {
-                h.iter()
-                    .any(|hook| hook["command"].as_str() == Some(hook_command))
-            })
+            serde_json::from_value::<HookMatcher>(entry.clone())
+                .is_ok_and(|entry| entry.hooks.iter().any(|hook| hook.command == hook_command))
         });
 
         if already_installed {
@@ -275,10 +275,11 @@ fn add_hook_entries(hooks: &mut Value, agent: &Agent) -> Result<()> {
             continue;
         }
 
-        arr.push(serde_json::json!({
-            "matcher": matcher,
-            "hooks": [{"type": "command", "command": hook_command}]
-        }));
+        let entry = HookMatcher {
+            matcher: matcher.to_string(),
+            hooks: vec![HookCommand::command_hook(hook_command)],
+        };
+        arr.push(serde_json::to_value(entry)?);
         eprintln!("hooks.{event_type}: installed atuin hook");
     }
 

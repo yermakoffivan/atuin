@@ -17,7 +17,7 @@
 //!   permissive parsing.
 
 use eyre::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The tool name agents use for shell execution. Only these events are
 /// recorded; every other tool (file writes, web fetches, ...) is skipped.
@@ -43,7 +43,7 @@ pub struct WireHookEvent {
 
 /// The lifecycle stage an event represents.
 ///
-/// The wire values are PascalCase and match these variant names exactly.
+/// The wire values are `PascalCase` and match these variant names exactly.
 /// Unrecognized values map to [`HookEventName::Other`] so future or
 /// agent-specific events are skipped rather than rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -70,6 +70,37 @@ pub struct WireToolInput {
 pub struct WireToolResponse {
     #[serde(rename = "exitCode", default)]
     pub exit_code: Option<i64>,
+}
+
+/// One entry in an agent's hook array: a matcher plus the command hooks to run
+/// when it matches. This is the shape Atuin writes into (and looks for in) the
+/// agent config file (`~/.claude/settings.json`, `~/.codex/hooks.json`).
+///
+/// Deserialization is permissive (unknown keys ignored) because the array also
+/// holds entries other tools installed, which we must read past without error.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HookMatcher {
+    pub matcher: String,
+    pub hooks: Vec<HookCommand>,
+}
+
+/// A single command hook. `kind` serializes as the `"type"` field and is always
+/// `"command"` for the hooks Atuin installs.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HookCommand {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub command: String,
+}
+
+impl HookCommand {
+    /// Build a `"command"`-type hook that runs `command`.
+    pub fn command_hook(command: impl Into<String>) -> Self {
+        Self {
+            kind: "command".to_string(),
+            command: command.into(),
+        }
+    }
 }
 
 /// The reduced event the hook command acts on.
@@ -303,5 +334,51 @@ mod tests {
     #[test]
     fn invalid_json_is_an_error() {
         assert!(parse_hook_stdin("not json").is_err());
+    }
+
+    #[test]
+    fn hook_matcher_serializes_to_agent_schema() {
+        let entry = HookMatcher {
+            matcher: "Bash".to_string(),
+            hooks: vec![HookCommand::command_hook("atuin hook claude-code")],
+        };
+
+        assert_eq!(
+            serde_json::to_value(&entry).unwrap(),
+            serde_json::json!({
+                "matcher": "Bash",
+                "hooks": [{"type": "command", "command": "atuin hook claude-code"}]
+            })
+        );
+    }
+
+    #[test]
+    fn hook_matcher_roundtrips_and_exposes_command() {
+        let value = serde_json::json!({
+            "matcher": "Bash",
+            "hooks": [{"type": "command", "command": "atuin hook claude-code"}]
+        });
+
+        let entry: HookMatcher = serde_json::from_value(value).unwrap();
+        assert!(
+            entry
+                .hooks
+                .iter()
+                .any(|hook| hook.command == "atuin hook claude-code")
+        );
+    }
+
+    #[test]
+    fn hook_matcher_tolerates_foreign_fields() {
+        // Other tools add entries with extra keys; deserializing our view of
+        // them must ignore those keys rather than fail.
+        let value = serde_json::json!({
+            "matcher": "Bash",
+            "hooks": [{"type": "command", "command": "some-other-tool", "timeout": 5}],
+            "comment": "installed by another tool"
+        });
+
+        let entry: HookMatcher = serde_json::from_value(value).unwrap();
+        assert_eq!(entry.hooks[0].command, "some-other-tool");
     }
 }
