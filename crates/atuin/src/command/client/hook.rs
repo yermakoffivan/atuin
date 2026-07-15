@@ -11,6 +11,8 @@ use super::history;
 
 mod proto;
 
+use proto::{HookEvent, parse_hook_stdin};
+
 const HOOK_EVENT_TYPES: &[&str] = &["PreToolUse", "PostToolUse", "PostToolUseFailure"];
 const PI_EXTENSION_SOURCE: &str = include_str!("../../../contrib/pi/atuin.ts");
 
@@ -118,71 +120,6 @@ impl Cmd {
             (None, None) => bail!("expected `atuin hook <agent>` or `atuin hook install <agent>`"),
             (Some(_), Some(_)) => bail!("hook action cannot be combined with a positional agent"),
         }
-    }
-}
-
-#[derive(Debug)]
-enum HookEvent {
-    Start {
-        command: String,
-        intent: Option<String>,
-        tool_use_id: String,
-    },
-    End {
-        tool_use_id: String,
-        exit: i64,
-    },
-    Skip,
-}
-
-fn parse_hook_stdin(input: &str) -> Result<HookEvent> {
-    let v: Value = serde_json::from_str(input)?;
-
-    if v.get("tool_name").and_then(|t| t.as_str()) != Some("Bash") {
-        return Ok(HookEvent::Skip);
-    }
-
-    let tool_use_id = match v.get("tool_use_id").and_then(|t| t.as_str()) {
-        Some(id) if !id.is_empty() => id.to_string(),
-        _ => return Ok(HookEvent::Skip),
-    };
-
-    match v.get("hook_event_name").and_then(|e| e.as_str()) {
-        Some("PreToolUse") => {
-            let tool_input = v.get("tool_input");
-            let command = tool_input
-                .and_then(|ti| ti.get("command"))
-                .and_then(|c| c.as_str())
-                .unwrap_or("");
-
-            if command.is_empty() {
-                return Ok(HookEvent::Skip);
-            }
-
-            let intent = tool_input
-                .and_then(|ti| ti.get("description"))
-                .and_then(|d| d.as_str())
-                .map(String::from);
-
-            Ok(HookEvent::Start {
-                command: command.to_string(),
-                intent,
-                tool_use_id,
-            })
-        }
-        Some(event @ ("PostToolUse" | "PostToolUseFailure")) => {
-            let exit = if event == "PostToolUseFailure" {
-                1
-            } else {
-                v.get("tool_response")
-                    .and_then(|tr| tr.get("exitCode"))
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0)
-            };
-
-            Ok(HookEvent::End { tool_use_id, exit })
-        }
-        _ => Ok(HookEvent::Skip),
     }
 }
 
@@ -406,76 +343,5 @@ mod tests {
             AtuinCmd::Client(client::Cmd::Hook(Cmd { action: None, agent: Some(agent) }))
                 if agent == "codex"
         ));
-    }
-
-    #[test]
-    fn test_parse_pre_tool_use() {
-        let input = r#"{
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Bash",
-            "tool_input": {"command": "echo hello", "description": "Test greeting"},
-            "tool_use_id": "toolu_abc123",
-            "session_id": "sess1",
-            "cwd": "/tmp"
-        }"#;
-
-        match parse_hook_stdin(input).unwrap() {
-            HookEvent::Start {
-                command,
-                intent,
-                tool_use_id,
-            } => {
-                assert_eq!(command, "echo hello");
-                assert_eq!(intent.as_deref(), Some("Test greeting"));
-                assert_eq!(tool_use_id, "toolu_abc123");
-            }
-            _ => panic!("expected Start event"),
-        }
-    }
-
-    #[test]
-    fn test_parse_post_tool_use() {
-        let input = r#"{
-            "hook_event_name": "PostToolUse",
-            "tool_name": "Bash",
-            "tool_input": {"command": "echo hello"},
-            "tool_response": {"exitCode": 0},
-            "tool_use_id": "toolu_abc123"
-        }"#;
-
-        match parse_hook_stdin(input).unwrap() {
-            HookEvent::End { tool_use_id, exit } => {
-                assert_eq!(tool_use_id, "toolu_abc123");
-                assert_eq!(exit, 0);
-            }
-            _ => panic!("expected End event"),
-        }
-    }
-
-    #[test]
-    fn test_parse_non_bash_tool_skipped() {
-        let input = r#"{
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Write",
-            "tool_input": {"file_path": "/tmp/test.txt", "content": "hello"},
-            "tool_use_id": "toolu_abc123"
-        }"#;
-
-        assert!(matches!(parse_hook_stdin(input).unwrap(), HookEvent::Skip));
-    }
-
-    #[test]
-    fn test_parse_failure_event() {
-        let input = r#"{
-            "hook_event_name": "PostToolUseFailure",
-            "tool_name": "Bash",
-            "tool_input": {"command": "false"},
-            "tool_use_id": "toolu_abc123"
-        }"#;
-
-        match parse_hook_stdin(input).unwrap() {
-            HookEvent::End { exit, .. } => assert_eq!(exit, 1),
-            _ => panic!("expected End event"),
-        }
     }
 }
