@@ -13,8 +13,10 @@
 //!   never break parsing.
 //! - Unrecognized `hook_event_name` values decode to [`HookEventName::Other`]
 //!   and are skipped rather than erroring.
-//! - Every field an agent may omit is optional, matching the previous
-//!   permissive parsing.
+//! - The three fields every event must have to be actionable — the stage, the
+//!   tool, and the correlation id — are required; a payload missing any of them
+//!   fails to deserialize (and is then skipped). The stage-specific
+//!   `tool_input` / `tool_response` payloads are optional.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,18 +26,25 @@ pub const BASH_TOOL_NAME: &str = "Bash";
 
 /// A hook event exactly as an agent serializes it on stdin.
 ///
-/// Field types mirror the agent JSON schema. Missing fields decode to `None`;
-/// unknown fields are ignored.
+/// The three fields every event carries — the stage, the tool, and the
+/// correlation id — are required, so a payload missing any of them fails to
+/// deserialize and is skipped. The stage-specific payloads are optional.
+/// Unknown fields are ignored.
 #[derive(Debug, Deserialize)]
 pub struct WireHookEvent {
-    #[serde(default)]
-    pub hook_event_name: Option<HookEventName>,
-    #[serde(default)]
-    pub tool_name: Option<String>,
-    #[serde(default)]
-    pub tool_use_id: Option<String>,
+    /// The lifecycle stage. An unrecognized value decodes to
+    /// [`HookEventName::Other`]; a missing field fails deserialization.
+    pub hook_event_name: HookEventName,
+    /// The tool that ran; we only record `Bash`.
+    pub tool_name: String,
+    /// Correlates a command's start and end across two `atuin hook`
+    /// invocations.
+    pub tool_use_id: String,
+    /// The command about to run. Present on `PreToolUse`; absent (and unread)
+    /// on the completion events.
     #[serde(default)]
     pub tool_input: Option<WireToolInput>,
+    /// How the command finished. Present on `PostToolUse`; absent elsewhere.
     #[serde(default)]
     pub tool_response: Option<WireToolResponse>,
 }

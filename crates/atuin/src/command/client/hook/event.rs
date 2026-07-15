@@ -7,8 +7,6 @@
 //! `tool_use_id` is required, and a `PostToolUseFailure` is normalized to exit
 //! status 1.
 
-use eyre::Result;
-
 use super::proto::{BASH_TOOL_NAME, HookEventName, WireHookEvent};
 
 /// The reduced event the hook command acts on.
@@ -31,17 +29,19 @@ impl From<WireHookEvent> for HookEvent {
     /// Reduce a decoded wire event to a [`HookEvent`]. Infallible: anything we
     /// do not act on becomes [`HookEvent::Skip`].
     fn from(wire: WireHookEvent) -> Self {
-        if wire.tool_name.as_deref() != Some(BASH_TOOL_NAME) {
+        if wire.tool_name.as_str() != BASH_TOOL_NAME {
             return Self::Skip;
         }
 
-        let tool_use_id = match wire.tool_use_id {
-            Some(id) if !id.is_empty() => id,
-            _ => return Self::Skip,
-        };
+        // Present but empty is as good as missing: a start could never be
+        // matched to its end.
+        if wire.tool_use_id.is_empty() {
+            return Self::Skip;
+        }
+        let tool_use_id = wire.tool_use_id;
 
         match wire.hook_event_name {
-            Some(HookEventName::PreToolUse) => {
+            HookEventName::PreToolUse => {
                 let (command, intent) = match wire.tool_input {
                     Some(input) => (input.command.unwrap_or_default(), input.description),
                     None => (String::new(), None),
@@ -57,27 +57,28 @@ impl From<WireHookEvent> for HookEvent {
                     tool_use_id,
                 }
             }
-            Some(HookEventName::PostToolUse) => {
+            HookEventName::PostToolUse => {
                 let exit = wire
                     .tool_response
                     .and_then(|response| response.exit_code)
                     .unwrap_or(0);
                 Self::End { tool_use_id, exit }
             }
-            Some(HookEventName::PostToolUseFailure) => Self::End {
+            HookEventName::PostToolUseFailure => Self::End {
                 tool_use_id,
                 exit: 1,
             },
-            Some(HookEventName::Other) | None => Self::Skip,
+            HookEventName::Other => Self::Skip,
         }
     }
 }
 
 /// Parse a raw hook payload (the JSON an agent writes to stdin) into a
-/// [`HookEvent`]. Errors only when the input is not valid JSON.
-pub fn parse_hook_stdin(input: &str) -> Result<HookEvent> {
-    let wire: WireHookEvent = serde_json::from_str(input)?;
-    Ok(wire.into())
+/// [`HookEvent`]. Total: a payload that doesn't fit the hook-event schema —
+/// invalid JSON, a missing required field, a wrong-typed field — is nothing we
+/// can act on, so it becomes [`HookEvent::Skip`] rather than an error.
+pub fn parse_hook_stdin(input: &str) -> HookEvent {
+    serde_json::from_str::<WireHookEvent>(input).map_or(HookEvent::Skip, HookEvent::from)
 }
 
 #[cfg(test)]
@@ -236,16 +237,21 @@ mod tests {
         HookEvent::Skip
     )]
     fn parses_agent_event(#[case] input: serde_json::Value, #[case] expected: HookEvent) {
-        assert_eq!(parse_hook_stdin(&input.to_string()).unwrap(), expected);
+        assert_eq!(parse_hook_stdin(&input.to_string()), expected);
     }
 
-    /// Payloads that aren't a hook-event object must error rather than parse.
+    /// A payload that doesn't fit the schema — not JSON, or JSON that isn't a
+    /// hook event — is nothing we can act on, so it is skipped, not an error.
     #[rstest]
     #[case::not_json("not json")]
     #[case::truncated(r#"{"tool_name":"#)]
     #[case::json_but_not_an_object("42")]
-    fn rejects_non_object_payloads(#[case] input: &str) {
-        assert!(parse_hook_stdin(input).is_err());
+    #[case::missing_required_fields(r#"{"tool_name": "Bash"}"#)]
+    #[case::wrong_typed_tool_use_id(
+        r#"{"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_use_id": 5, "tool_input": {"command": "ls"}}"#
+    )]
+    fn unfit_payloads_are_skipped(#[case] input: &str) {
+        assert_eq!(parse_hook_stdin(input), HookEvent::Skip);
     }
 
     proptest! {
@@ -271,7 +277,7 @@ mod tests {
             });
 
             prop_assert_eq!(
-                parse_hook_stdin(&input.to_string()).unwrap(),
+                parse_hook_stdin(&input.to_string()),
                 HookEvent::Start { command, intent: description, tool_use_id }
             );
         }
@@ -290,7 +296,7 @@ mod tests {
             });
 
             prop_assert_eq!(
-                parse_hook_stdin(&input.to_string()).unwrap(),
+                parse_hook_stdin(&input.to_string()),
                 HookEvent::End { tool_use_id, exit }
             );
         }
@@ -310,7 +316,7 @@ mod tests {
             });
 
             prop_assert_eq!(
-                parse_hook_stdin(&input.to_string()).unwrap(),
+                parse_hook_stdin(&input.to_string()),
                 HookEvent::End { tool_use_id, exit: 1 }
             );
         }
@@ -332,7 +338,7 @@ mod tests {
                 "tool_use_id": tool_use_id,
             });
 
-            prop_assert_eq!(parse_hook_stdin(&input.to_string()).unwrap(), HookEvent::Skip);
+            prop_assert_eq!(parse_hook_stdin(&input.to_string()), HookEvent::Skip);
         }
     }
 }
