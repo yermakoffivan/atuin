@@ -7,7 +7,9 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub enum WireToolName {
+    /// The tool the agent requested is a Bash command.
     Bash,
+    /// Unrecognized wire tool name.
     #[serde(other)]
     Other,
 }
