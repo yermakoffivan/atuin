@@ -1,16 +1,9 @@
 //! The domain event the hook command acts on.
-//!
-//! [`proto`](super::proto) models the raw JSON coding agents send on stdin;
-//! this module reduces a decoded [`WireHookEvent`] to the small [`HookEvent`]
-//! verb that [`handle`](super::handle) switches on. The reduction is where the
-//! protocol's *meaning* lives: only `Bash` tools are recorded, a correlatable
-//! `tool_use_id` is required, and a `PostToolUseFailure` is normalized to exit
-//! status 1.
 
 use eyre::Result;
 use serde_json::error::Category;
 
-use super::proto::{BASH_TOOL_NAME, HookEventName, WireHookEvent};
+use super::wire::{WireToolName, HookEventName, WireHookEvent};
 
 /// An actionable event the hook command records. A payload that is nothing to
 /// record reduces to `None` rather than a variant — see the [`From`] impl and
@@ -32,7 +25,7 @@ impl From<WireHookEvent> for Option<HookEvent> {
     /// nothing to record: a non-Bash tool, a missing or empty `tool_use_id`, an
     /// empty command, or an event stage we don't track.
     fn from(wire: WireHookEvent) -> Self {
-        if wire.tool_name.as_str() != BASH_TOOL_NAME {
+        if matches!(wire.tool_name, WireToolName::Other) {
             return None;
         }
 
@@ -77,15 +70,13 @@ impl From<WireHookEvent> for Option<HookEvent> {
 }
 
 impl HookEvent {
-    /// Parse a raw hook payload (the JSON an agent writes to stdin) into a
-    /// [`HookEvent`], or `None` when there is nothing to record.
+    /// Parse a raw hook payload (the JSON an agent writes to stdin) into a [`HookEvent`], or `None`
+    /// when there is nothing to record.
     ///
-    /// Well-formed JSON that doesn't fit the hook-event schema — a missing
-    /// required field, a wrong-typed field, a value that isn't even an object —
-    /// is not an event we handle, so it yields `Ok(None)`. Only *malformed*
-    /// JSON (a syntax error or truncated input) is surfaced as an error: an
-    /// agent could never send that legitimately, so it signals a real fault
-    /// worth seeing.
+    /// Well-formed JSON that doesn't fit the hook-event schema yields `Ok(None)`.
+    ///
+    /// Only *malformed* JSON (a syntax error or truncated input) is surfaced as an error: an agent
+    /// could never send that legitimately, so it signals a real fault worth seeing.
     pub fn from_json_str(input: &str) -> Result<Option<Self>> {
         match serde_json::from_str::<WireHookEvent>(input) {
             Ok(wire) => Ok(wire.into()),

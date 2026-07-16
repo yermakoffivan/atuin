@@ -2,7 +2,7 @@
 //! file (`~/.claude/settings.json`, `~/.codex/hooks.json`).
 //!
 //! This is a different protocol from the stdin hook *events* in
-//! [`super::proto`]: those are what an agent sends us per tool use, whereas
+//! [`super::wire`]: those are what an agent sends us per tool use, whereas
 //! these model the config-file entries `atuin hook install` reads and writes.
 //! Only the entry Atuin owns is typed — the surrounding config document stays a
 //! `serde_json::Value`, since it is arbitrary user JSON we must round-trip.

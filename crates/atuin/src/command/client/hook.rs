@@ -12,7 +12,7 @@ use super::history;
 
 mod event;
 mod install;
-mod proto;
+mod wire;
 
 use event::HookEvent;
 use install::{HookCommand, HookMatcher};
