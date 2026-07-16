@@ -146,11 +146,11 @@ async fn handle(agent_name: &str, settings: &Settings) -> Result<()> {
     }
 
     match HookEvent::from_json_str(&input)? {
-        HookEvent::Start {
+        Some(HookEvent::Start {
             command,
             intent,
             tool_use_id,
-        } => {
+        }) => {
             if let Some(history_id) = history::start_history_entry(
                 settings,
                 &command,
@@ -162,7 +162,7 @@ async fn handle(agent_name: &str, settings: &Settings) -> Result<()> {
                 std::fs::write(id_file_path(&tool_use_id), &history_id)?;
             }
         }
-        HookEvent::End { tool_use_id, exit } => {
+        Some(HookEvent::End { tool_use_id, exit }) => {
             let id_path = id_file_path(&tool_use_id);
 
             if let Ok(history_id) = std::fs::read_to_string(&id_path) {
@@ -173,7 +173,7 @@ async fn handle(agent_name: &str, settings: &Settings) -> Result<()> {
                 let _ = std::fs::remove_file(&id_path);
             }
         }
-        HookEvent::Skip => {}
+        None => {}
     }
 
     Ok(())

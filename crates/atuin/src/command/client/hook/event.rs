@@ -12,7 +12,9 @@ use serde_json::error::Category;
 
 use super::proto::{BASH_TOOL_NAME, HookEventName, WireHookEvent};
 
-/// The reduced event the hook command acts on.
+/// An actionable event the hook command records. A payload that is nothing to
+/// record reduces to `None` rather than a variant — see the [`From`] impl and
+/// [`HookEvent::from_json_str`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HookEvent {
     /// A Bash command is about to run; open a history entry.
@@ -23,23 +25,21 @@ pub enum HookEvent {
     },
     /// A Bash command finished; close the matching history entry.
     End { tool_use_id: String, exit: i64 },
-    /// Nothing to record (non-Bash tool, missing id, empty command, or an
-    /// event we don't track).
-    Skip,
 }
 
-impl From<WireHookEvent> for HookEvent {
-    /// Reduce a decoded wire event to a [`HookEvent`]. Infallible: anything we
-    /// do not act on becomes [`HookEvent::Skip`].
+impl From<WireHookEvent> for Option<HookEvent> {
+    /// Reduce a decoded wire event to a [`HookEvent`], or `None` when there is
+    /// nothing to record: a non-Bash tool, a missing or empty `tool_use_id`, an
+    /// empty command, or an event stage we don't track.
     fn from(wire: WireHookEvent) -> Self {
         if wire.tool_name.as_str() != BASH_TOOL_NAME {
-            return Self::Skip;
+            return None;
         }
 
         // Present but empty is as good as missing: a start could never be
         // matched to its end.
         if wire.tool_use_id.is_empty() {
-            return Self::Skip;
+            return None;
         }
         let tool_use_id = wire.tool_use_id;
 
@@ -51,45 +51,45 @@ impl From<WireHookEvent> for HookEvent {
                 };
 
                 if command.is_empty() {
-                    return Self::Skip;
+                    return None;
                 }
 
-                Self::Start {
+                Some(HookEvent::Start {
                     command,
                     intent,
                     tool_use_id,
-                }
+                })
             }
             HookEventName::PostToolUse => {
                 let exit = wire
                     .tool_response
                     .and_then(|response| response.exit_code)
                     .unwrap_or(0);
-                Self::End { tool_use_id, exit }
+                Some(HookEvent::End { tool_use_id, exit })
             }
-            HookEventName::PostToolUseFailure => Self::End {
+            HookEventName::PostToolUseFailure => Some(HookEvent::End {
                 tool_use_id,
                 exit: 1,
-            },
-            HookEventName::Other => Self::Skip,
+            }),
+            HookEventName::Other => None,
         }
     }
 }
 
 impl HookEvent {
     /// Parse a raw hook payload (the JSON an agent writes to stdin) into a
-    /// `HookEvent`.
+    /// [`HookEvent`], or `None` when there is nothing to record.
     ///
     /// Well-formed JSON that doesn't fit the hook-event schema — a missing
     /// required field, a wrong-typed field, a value that isn't even an object —
-    /// is not an event we handle, so it reduces to [`HookEvent::Skip`]. Only
-    /// *malformed* JSON (a syntax error or truncated input) is surfaced as an
-    /// error: an agent could never send that legitimately, so it signals a real
-    /// fault worth seeing.
-    pub fn from_json_str(input: &str) -> Result<Self> {
+    /// is not an event we handle, so it yields `Ok(None)`. Only *malformed*
+    /// JSON (a syntax error or truncated input) is surfaced as an error: an
+    /// agent could never send that legitimately, so it signals a real fault
+    /// worth seeing.
+    pub fn from_json_str(input: &str) -> Result<Option<Self>> {
         match serde_json::from_str::<WireHookEvent>(input) {
             Ok(wire) => Ok(wire.into()),
-            Err(err) if err.classify() == Category::Data => Ok(Self::Skip),
+            Err(err) if err.classify() == Category::Data => Ok(None),
             Err(err) => Err(err.into()),
         }
     }
@@ -115,11 +115,11 @@ mod tests {
             "session_id": "sess1",
             "cwd": "/tmp"
         }),
-        HookEvent::Start {
+        Some(HookEvent::Start {
             command: "echo hello".into(),
             intent: Some("Test greeting".into()),
             tool_use_id: "toolu_abc123".into(),
-        }
+        })
     )]
     // No description → Start with no intent.
     #[case::pre_tool_use_without_description(
@@ -129,7 +129,7 @@ mod tests {
             "tool_input": {"command": "ls"},
             "tool_use_id": "toolu_abc123"
         }),
-        HookEvent::Start { command: "ls".into(), intent: None, tool_use_id: "toolu_abc123".into() }
+        Some(HookEvent::Start { command: "ls".into(), intent: None, tool_use_id: "toolu_abc123".into() })
     )]
     // PostToolUse → End carrying the reported exit code.
     #[case::post_tool_use_uses_exit_code(
@@ -140,7 +140,7 @@ mod tests {
             "tool_response": {"exitCode": 3, "stdout": "hello\n"},
             "tool_use_id": "toolu_abc123"
         }),
-        HookEvent::End { tool_use_id: "toolu_abc123".into(), exit: 3 }
+        Some(HookEvent::End { tool_use_id: "toolu_abc123".into(), exit: 3 })
     )]
     // Missing exitCode defaults to 0.
     #[case::post_tool_use_without_exit_code_defaults_zero(
@@ -150,7 +150,7 @@ mod tests {
             "tool_response": {},
             "tool_use_id": "toolu_abc123"
         }),
-        HookEvent::End { tool_use_id: "toolu_abc123".into(), exit: 0 }
+        Some(HookEvent::End { tool_use_id: "toolu_abc123".into(), exit: 0 })
     )]
     // A null exitCode also defaults to 0.
     #[case::null_exit_code_defaults_zero(
@@ -160,7 +160,7 @@ mod tests {
             "tool_response": {"exitCode": null},
             "tool_use_id": "toolu_abc123"
         }),
-        HookEvent::End { tool_use_id: "toolu_abc123".into(), exit: 0 }
+        Some(HookEvent::End { tool_use_id: "toolu_abc123".into(), exit: 0 })
     )]
     // PostToolUseFailure forces exit 1 and ignores tool_response entirely.
     #[case::failure_forces_exit_one_ignoring_response(
@@ -171,7 +171,7 @@ mod tests {
             "tool_response": {"exitCode": 0},
             "tool_use_id": "toolu_abc123"
         }),
-        HookEvent::End { tool_use_id: "toolu_abc123".into(), exit: 1 }
+        Some(HookEvent::End { tool_use_id: "toolu_abc123".into(), exit: 1 })
     )]
     // Non-Bash tools are never recorded.
     #[case::non_bash_tool_skipped(
@@ -181,7 +181,7 @@ mod tests {
             "tool_input": {"file_path": "/tmp/test.txt", "content": "hello"},
             "tool_use_id": "toolu_abc123"
         }),
-        HookEvent::Skip
+        None
     )]
     // A missing tool_use_id can't be correlated start↔end → skip.
     #[case::missing_tool_use_id_skipped(
@@ -190,7 +190,7 @@ mod tests {
             "tool_name": "Bash",
             "tool_input": {"command": "echo hi"}
         }),
-        HookEvent::Skip
+        None
     )]
     // An empty tool_use_id is treated the same as missing.
     #[case::empty_tool_use_id_skipped(
@@ -200,7 +200,7 @@ mod tests {
             "tool_input": {"command": "echo hi"},
             "tool_use_id": ""
         }),
-        HookEvent::Skip
+        None
     )]
     // An empty command has nothing to record.
     #[case::empty_command_skipped(
@@ -210,7 +210,7 @@ mod tests {
             "tool_input": {"command": ""},
             "tool_use_id": "toolu_abc123"
         }),
-        HookEvent::Skip
+        None
     )]
     // No tool_input at all → empty command → skip.
     #[case::missing_tool_input_skipped(
@@ -219,7 +219,7 @@ mod tests {
             "tool_name": "Bash",
             "tool_use_id": "toolu_abc123"
         }),
-        HookEvent::Skip
+        None
     )]
     // A null tool_input decodes to None → skip.
     #[case::null_tool_input_skipped(
@@ -229,7 +229,7 @@ mod tests {
             "tool_input": null,
             "tool_use_id": "toolu_abc123"
         }),
-        HookEvent::Skip
+        None
     )]
     // An event name we don't model is ignored.
     #[case::unknown_event_skipped(
@@ -239,7 +239,7 @@ mod tests {
             "tool_input": {"command": "ls"},
             "tool_use_id": "toolu_abc123"
         }),
-        HookEvent::Skip
+        None
     )]
     // A missing event name is ignored.
     #[case::missing_event_skipped(
@@ -248,9 +248,9 @@ mod tests {
             "tool_input": {"command": "ls"},
             "tool_use_id": "toolu_abc123"
         }),
-        HookEvent::Skip
+        None
     )]
-    fn parses_agent_event(#[case] input: serde_json::Value, #[case] expected: HookEvent) {
+    fn parses_agent_event(#[case] input: serde_json::Value, #[case] expected: Option<HookEvent>) {
         assert_eq!(HookEvent::from_json_str(&input.to_string()).unwrap(), expected);
     }
 
@@ -263,7 +263,7 @@ mod tests {
         r#"{"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_use_id": 5, "tool_input": {"command": "ls"}}"#
     )]
     fn well_formed_non_events_are_skipped(#[case] input: &str) {
-        assert_eq!(HookEvent::from_json_str(input).unwrap(), HookEvent::Skip);
+        assert_eq!(HookEvent::from_json_str(input).unwrap(), None);
     }
 
     /// Malformed JSON is a genuine fault an agent could never send by design,
@@ -299,7 +299,7 @@ mod tests {
 
             prop_assert_eq!(
                 HookEvent::from_json_str(&input.to_string()).unwrap(),
-                HookEvent::Start { command, intent: description, tool_use_id }
+                Some(HookEvent::Start { command, intent: description, tool_use_id })
             );
         }
 
@@ -318,7 +318,7 @@ mod tests {
 
             prop_assert_eq!(
                 HookEvent::from_json_str(&input.to_string()).unwrap(),
-                HookEvent::End { tool_use_id, exit }
+                Some(HookEvent::End { tool_use_id, exit })
             );
         }
 
@@ -338,7 +338,7 @@ mod tests {
 
             prop_assert_eq!(
                 HookEvent::from_json_str(&input.to_string()).unwrap(),
-                HookEvent::End { tool_use_id, exit: 1 }
+                Some(HookEvent::End { tool_use_id, exit: 1 })
             );
         }
 
@@ -359,7 +359,7 @@ mod tests {
                 "tool_use_id": tool_use_id,
             });
 
-            prop_assert_eq!(HookEvent::from_json_str(&input.to_string()).unwrap(), HookEvent::Skip);
+            prop_assert_eq!(HookEvent::from_json_str(&input.to_string()).unwrap(), None);
         }
     }
 }
