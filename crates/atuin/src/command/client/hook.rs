@@ -5,17 +5,14 @@ use atuin_client::settings::Settings;
 use atuin_common::utils::home_dir;
 use clap::{Parser, Subcommand};
 use eyre::{Result, bail};
-use serde::Deserialize;
 use serde_json::Value;
 
 use super::history;
 
 mod event;
-mod install;
 mod wire;
 
 use event::HookEvent;
-use install::{HookCommand, HookMatcher};
 
 const HOOK_EVENT_TYPES: &[&str] = &["PreToolUse", "PostToolUse", "PostToolUseFailure"];
 const PI_EXTENSION_SOURCE: &str = include_str!("../../../contrib/pi/atuin.ts");
@@ -269,9 +266,20 @@ fn add_hook_entries(hooks: &mut Value, agent: &Agent) -> Result<()> {
             .as_array_mut()
             .ok_or_else(|| eyre::eyre!("hooks.{event_type} is not an array"))?;
 
+        // Scanned untyped on purpose: the array holds entries other tools wrote,
+        // in shapes Atuin has no model for. Asking only "does any hook here run
+        // our command?" cannot be tripped up by an entry that would not fit a
+        // type — including one with no `matcher`, which agents read as "match
+        // every tool" and a typed scan would miss entirely.
         let already_installed = arr.iter().any(|entry| {
-            HookMatcher::deserialize(entry)
-                .is_ok_and(|entry| entry.hooks.iter().any(|hook| hook.command == hook_command))
+            entry
+                .get("hooks")
+                .and_then(Value::as_array)
+                .is_some_and(|hooks| {
+                    hooks.iter().any(|hook| {
+                        hook.get("command").and_then(Value::as_str) == Some(hook_command)
+                    })
+                })
         });
 
         if already_installed {
@@ -279,11 +287,10 @@ fn add_hook_entries(hooks: &mut Value, agent: &Agent) -> Result<()> {
             continue;
         }
 
-        let entry = HookMatcher {
-            matcher: matcher.to_string(),
-            hooks: vec![HookCommand::command_hook(hook_command)],
-        };
-        arr.push(serde_json::to_value(entry)?);
+        arr.push(serde_json::json!({
+            "matcher": matcher,
+            "hooks": [{"type": "command", "command": hook_command}],
+        }));
         eprintln!("hooks.{event_type}: installed atuin hook");
     }
 
@@ -348,6 +355,41 @@ mod tests {
             AtuinCmd::Client(client::Cmd::Hook(Cmd { action: None, agent: Some(agent) }))
                 if agent == "codex"
         ));
+    }
+
+    /// The entry Atuin writes must match the agents' expected schema exactly,
+    /// so that configs written by older versions keep being recognized.
+    #[test]
+    fn add_hook_entries_writes_the_agent_schema() {
+        let agent = Agent::from_name("claude-code").unwrap();
+        let mut hooks = serde_json::json!({});
+
+        add_hook_entries(&mut hooks, &agent).unwrap();
+
+        assert_eq!(
+            hooks["PreToolUse"],
+            serde_json::json!([{
+                "matcher": "Bash",
+                "hooks": [{"type": "command", "command": "atuin hook claude-code"}],
+            }])
+        );
+    }
+
+    /// An entry with no `matcher` is legal — agents read it as "match every
+    /// tool" — so a hook living in one must still be found.
+    #[test]
+    fn add_hook_entries_detects_installed_in_a_matcherless_entry() {
+        let agent = Agent::from_name("claude-code").unwrap();
+        let mut hooks = serde_json::json!({
+            "PreToolUse": [{
+                "hooks": [{"type": "command", "command": "atuin hook claude-code"}]
+            }]
+        });
+
+        add_hook_entries(&mut hooks, &agent).unwrap();
+
+        let arr = hooks["PreToolUse"].as_array().unwrap();
+        assert_eq!(arr.len(), 1, "should not duplicate an existing atuin hook");
     }
 
     #[test]
