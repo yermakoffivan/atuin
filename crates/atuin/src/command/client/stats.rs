@@ -1,11 +1,11 @@
 use clap::Parser;
 use eyre::Result;
 use interim::parse_date_string;
-use time::{Duration, OffsetDateTime, Time};
+use time::{Duration, OffsetDateTime, Time, format_description::well_known::Rfc3339};
 
 use atuin_client::{
-    database::{Database, current_context},
-    settings::Settings,
+    database::{Database, OptFilters, current_context},
+    settings::{FilterMode, SearchMode, Settings},
     theme::Theme,
 };
 
@@ -36,6 +36,10 @@ pub struct Cmd {
     /// The number of consecutive commands to consider
     #[arg(long, short, default_value = "1", value_parser = parse_ngram_size)]
     ngram_size: usize,
+
+    /// Filter commands by scope [global, host, session, directory, workspace]
+    #[arg(long = "filter-mode")]
+    filter_mode: Option<FilterMode>,
 }
 
 impl Cmd {
@@ -50,29 +54,52 @@ impl Cmd {
         let now = OffsetDateTime::now_utc().to_offset(settings.timezone.0);
         let last_night = now.replace_time(Time::MIDNIGHT);
 
-        let history = if words.as_str() == "all" {
-            db.list(&[], &context, None, false, false).await?
+        let range = if words.as_str() == "all" {
+            None
         } else if words.trim() == "today" {
             let start = last_night;
             let end = start + Duration::days(1);
-            db.range(start, end).await?
+            Some((start, end))
         } else if words.trim() == "month" {
             let end = last_night;
             let start = end - Duration::days(31);
-            db.range(start, end).await?
+            Some((start, end))
         } else if words.trim() == "week" {
             let end = last_night;
             let start = end - Duration::days(7);
-            db.range(start, end).await?
+            Some((start, end))
         } else if words.trim() == "year" {
             let end = last_night;
             let start = end - Duration::days(365);
-            db.range(start, end).await?
+            Some((start, end))
         } else {
             let start = parse_date_string(&words, now, settings.dialect.into())?;
             let end = start + Duration::days(1);
-            db.range(start, end).await?
+            Some((start, end))
         };
+
+        // `search` re-parses these with `interim`, which reads the RFC3339 offset
+        // correctly, so the instants computed above survive the round trip.
+        let (after, before) = match range {
+            Some((start, end)) => (Some(start.format(&Rfc3339)?), Some(end.format(&Rfc3339)?)),
+            None => (None, None),
+        };
+
+        let history = db
+            .search(
+                SearchMode::FullText,
+                self.filter_mode.unwrap_or(FilterMode::Global),
+                &context,
+                "",
+                OptFilters {
+                    before,
+                    after,
+                    // Stats count every execution, not one row per distinct command.
+                    include_duplicates: true,
+                    ..Default::default()
+                },
+            )
+            .await?;
 
         let stats = compute(settings, &history, self.count, self.ngram_size);
 
