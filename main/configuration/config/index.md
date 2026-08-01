@@ -100,12 +100,11 @@ sync_frequency = "1h"
 
 Default: `fuzzy`
 
-Which search mode to use. Atuin supports `prefix`, `fulltext`, `fuzzy`, `daemon-fuzzy`, and `skim` search modes.
+Which search mode to use. Atuin supports `prefix`, `fulltext`, `fuzzy`, and `daemon-fuzzy` search modes.
 
 - `prefix` mode searches for "query\*".
 - `fulltext` mode searches for "\*query\*".
 - `fuzzy` applies the [fuzzy search syntax](#fuzzy-search-syntax).
-- `skim` applies the [skim search syntax](https://github.com/lotabout/skim#search-syntax).
 
 ```
 search_mode = "fuzzy"
@@ -127,9 +126,7 @@ autostart = true
 
 You can customize the priority given to frequency, recency, and frecency scores in this mode. See [the score multipliers section](#score-multipliers) for more information.
 
-Interactive-only modes
-
-The `daemon-fuzzy` and `skim` modes take effect only for interactive TUI searches. Non-interactive `atuin search` commands will treat these modes as `fuzzy` instead.
+Note: in non-interactive searches (manually running `atuin search` from the command line), `daemon-fuzzy` behaves like `fuzzy`.
 
 #### `fuzzy` search syntax
 
@@ -844,6 +841,10 @@ Requirements
 
 - tmux >= 3.2, which is where `display-popup` gained the behavior Atuin needs
 - zsh, bash, or fish — nushell, xonsh, and PowerShell don't support the popup yet
+
+iTerm2's native tmux integration
+
+iTerm2's native tmux integration (control mode, `tmux -CC`) can't display `tmux display-popup` popups, and Atuin can't detect this to fall back automatically. If you rely on it, keep `[tmux] enabled = false` (the default) so the search UI renders inline.
 
 These settings are read by `atuin init` and passed to the shell plugin through environment variables, so **restart your shell after changing them**. To disable the popup for a single session without touching your config, set `ATUIN_TMUX_POPUP=false` before Atuin's key bindings run.
 
