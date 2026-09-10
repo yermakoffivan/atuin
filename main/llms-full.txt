@@ -2848,20 +2848,23 @@ If vim is enabled in the config (see [`keymap_mode`](https://docs.atuin.sh/confi
 
 ### Inspector
 
-Open the inspector with Ctrl + o
+Open with **Ctrl + o**. **Runs** lists executions of the selected command; **Session** lists commands in that run's session. Both are newest first. **Stats** shows aggregate statistics.
 
-| Shortcut  | Action                                          |
-| --------- | ----------------------------------------------- |
-| Esc       | Close the inspector, returning to the shell     |
-| Ctrl + o  | Close the inspector, returning to search view   |
-| Ctrl + d  | Delete the inspected item from the history      |
-| ↑         | Inspect the previous item in the history        |
-| ↓         | Inspect the next item in the history            |
-| Page Up   | Inspect the previous item in the history        |
-| Page Down | Inspect the next item in the history            |
-| j / k     | Navigate items (when vim mode is enabled)       |
-| Enter     | Execute selected item (respects `enter_accept`) |
-| Tab       | Select current item and edit                    |
+Captured output requires the local daemon and preserves colours and formatting. By default, **Enter** opens output instead of executing the command, regardless of `enter_accept`. **Esc** returns to the same selection.
+
+| Default shortcut     | Action                                                       |
+| -------------------- | ------------------------------------------------------------ |
+| r / s / t            | Switch to Runs / Session / Stats                             |
+| Enter / o            | Open captured output                                         |
+| ↑ / ↓ or mouse wheel | Select a row or scroll output                                |
+| j / k                | Navigate in vim mode                                         |
+| Page Up / Page Down  | Scroll output a page (one row in lists)                      |
+| Home / End           | Jump to the start / end of output                            |
+| Esc                  | Back to the inspector or search                              |
+| Ctrl + o             | Back to search                                               |
+| Ctrl + d             | Delete the selected run                                      |
+| Tab                  | Edit the selected command in the shell, without executing it |
+| Ctrl + c             | Close Atuin                                                  |
 
 # Advanced Atuin UI Keybinding
 
@@ -3054,9 +3057,9 @@ Actions are specified as kebab-case strings.
 | `scroll-page-down`        | Scroll a full page down                                 |
 | `scroll-to-top`           | Jump to the top of the list                             |
 | `scroll-to-bottom`        | Jump to the bottom of the list                          |
-| `scroll-to-screen-top`    | Jump to the top of the visible screen                   |
-| `scroll-to-screen-middle` | Jump to the middle of the visible screen                |
-| `scroll-to-screen-bottom` | Jump to the bottom of the visible screen                |
+| `scroll-to-screen-top`    | Jump to the top of the visible search results           |
+| `scroll-to-screen-middle` | Jump to the middle of the visible search results        |
+| `scroll-to-screen-bottom` | Jump to the bottom of the visible search results        |
 
 Note: `select-next` and `select-previous` respect the `invert` setting. When `invert` is true, the visual direction is flipped.
 
@@ -3098,10 +3101,16 @@ The difference between `accept` and `return-selection`: `accept` runs the comman
 
 ### Inspector
 
-| Action             | Description                                       |
-| ------------------ | ------------------------------------------------- |
-| `inspect-previous` | Inspect the previous entry (in the inspector tab) |
-| `inspect-next`     | Inspect the next entry (in the inspector tab)     |
+| Action             | Description                                 |
+| ------------------ | ------------------------------------------- |
+| `inspect-previous` | Select the row above, or scroll output up   |
+| `inspect-next`     | Select the row below, or scroll output down |
+| `inspect-runs`     | Open Runs                                   |
+| `inspect-session`  | Open Session                                |
+| `inspect-stats`    | Open Stats                                  |
+| `inspect-output`   | Open captured output                        |
+
+List conditions apply to the current inspector view, not the search results. In Output, start/end conditions describe scroll boundaries.
 
 ### Special
 
@@ -5393,6 +5402,7 @@ pty-proxy sits between your terminal and your shell, and uses your shell's promp
 Captured output is stored in memory, on your machine:
 
 - The daemon keeps up to 1MB of output per command, and the most recent 128 commands (up to 32MB of output) per shell session.
+- When a command's output exceeds 1MB, the first 512KB and last 512KB are kept — these are typically the most relevant portions.
 - Output is lost when the daemon stops. Only commands captured while the daemon was running are available.
 - When you delete a history entry, Atuin also deletes its captured output.
 - Atuin only keeps output for commands in your history. If Atuin doesn't record a command (for example a failing command when `store_failed = false`), it discards that command's output too.
