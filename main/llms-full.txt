@@ -210,13 +210,13 @@ cargo install atuin --locked
 brew install atuin
 ```
 
-Atuin is also available in [MacPorts](https://ports.macports.org/port/atuin/)
+Atuin is also available in [MacPorts](https://ports.macports.org/port/atuin/):
 
 ```
 sudo port install atuin
 ```
 
-Atuin is also installable using [mise](https://github.com/jdx/mise)
+Atuin is also installable using [mise](https://github.com/jdx/mise):
 
 ```
 mise use -g atuin@latest
@@ -228,22 +228,10 @@ This repository is a flake, and can be installed using `nix profile`:
 nix profile install "github:atuinsh/atuin"
 ```
 
-Atuin is also available in [nixpkgs](https://github.com/NixOS/nixpkgs):
-
-```
-nix-env -f '<nixpkgs>' -iA atuin
-```
-
 Atuin is available in the Arch Linux [extra repository](https://archlinux.org/packages/extra/x86_64/atuin/):
 
 ```
 pacman -S atuin
-```
-
-Atuin is available in the Void Linux [repository](https://github.com/void-linux/void-packages/tree/master/srcpkgs/atuin):
-
-```
-sudo xbps-install atuin
 ```
 
 Atuin is available in the Termux package repository:
@@ -1145,11 +1133,11 @@ atuin history dedup --dry-run --before "2025-01-01" --dupkeep 1
 atuin history dedup --before "2025-01-01" --dupkeep 1
 ```
 
-| Flag             | Description                                             |
-| ---------------- | ------------------------------------------------------- |
-| `--dry-run`/`-n` | List duplicates without deleting                        |
-| `--before`/`-b`  | Only consider entries added before this date (required) |
-| `--dupkeep`      | Number of recent duplicates to keep                     |
+| Flag             | Description                                                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `--dry-run`/`-n` | List duplicates without deleting                                                                                                |
+| `--before`/`-b`  | Only consider entries added before this date, read in the configured `timezone` unless it carries an explicit offset (required) |
+| `--dupkeep`      | Number of recent duplicates to keep                                                                                             |
 
 ## Deleting your sync account
 
@@ -3786,6 +3774,7 @@ Atuin search supports wildcards, with either the `*` or `%` character. By defaul
 | `--exclude-exit`     | Exclude an exit code; repeat to exclude all listed codes (default: none)                                                                                                         |
 | `--before`           | Only include commands run before this time (default: none)                                                                                                                       |
 | `--after`            | Only include commands run after this time (default: none)                                                                                                                        |
+| `--timezone`/`--tz`  | Timezone to display times in and to read `--before`/`--after` in (default: configured `timezone`)                                                                                |
 | `--interactive`/`-i` | Open the interactive search UI (default: false)                                                                                                                                  |
 | `--human`            | Use human-readable formatting for the timestamp and duration (default: false)                                                                                                    |
 | `--limit`            | Limit the number of results (default: none)                                                                                                                                      |
