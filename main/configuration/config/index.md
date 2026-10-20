@@ -6,6 +6,8 @@ You can configure Atuin to use a different directory by setting the `ATUIN_HOME`
 
 Additionally, if set, `ATUIN_CONFIG_DIR` will override the location of `config.toml` and [`server.toml`](https://docs.atuin.sh/self-hosting/server-setup/index.md): Atuin will look for those files in `$ATUIN_CONFIG_DIR` rather than `~/.atuin`.
 
+Paths in the config may start with `~` and refer to environment variables, as in `$XDG_RUNTIME_DIR/atuin.sock`; write `$$` for a literal `$`. A relative path is relative to the directory holding `config.toml`, whatever directory Atuin runs in: with the default config, `socket_path = "atuin.sock"` is `~/.atuin/atuin.sock`. This holds for paths set through `ATUIN_*` environment variables too. A database path must name a file: SQLite's `:memory:` isn't accepted, and neither is a `sqlite:` or `file:` URI.
+
 Upgrading from older versions
 
 Older versions of Atuin stored data in `~/.config/atuin` (or `$XDG_CONFIG_HOME/atuin`) and `~/.local/share/atuin` (or `$XDG_DATA_HOME/atuin`). If `ATUIN_HOME` is unset (the default), Atuin will continue to look for data in the old locations if it doesn't find it in `~/.atuin`, so existing installations will keep working without any modifications.
@@ -456,7 +458,7 @@ This is a safety net, not a guarantee. It only catches credentials in recognized
 
 ### macOS Ctrl-n key shortcuts
 
-Default: `true`
+Default: `false`
 
 macOS doesn't have an `Alt` key, although terminal emulators can often be configured to map the `Option` key to be used as `Alt`. *However*, remapping `Option` this way may prevent typing some characters, such as using `Option`+`3` to type `#` on the British English layout. For such a scenario, set the `ctrl_n_shortcuts` option to `true` in your config file to replace `Alt`+`0` to `Alt`+`9` shortcuts with `Ctrl`+`0` to `Ctrl`+`9` instead:
 
