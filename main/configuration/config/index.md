@@ -6,7 +6,7 @@ You can configure Atuin to use a different directory by setting the `ATUIN_HOME`
 
 Additionally, if set, `ATUIN_CONFIG_DIR` will override the location of `config.toml` and [`server.toml`](https://docs.atuin.sh/self-hosting/server-setup/index.md): Atuin will look for those files in `$ATUIN_CONFIG_DIR` rather than `~/.atuin`.
 
-Paths in the config may start with `~` and refer to environment variables, as in `$XDG_RUNTIME_DIR/atuin.sock`; write `$$` for a literal `$`. A relative path is relative to the directory holding `config.toml`, whatever directory Atuin runs in: with the default config, `socket_path = "atuin.sock"` is `~/.atuin/atuin.sock`. This holds for paths set through `ATUIN_*` environment variables too. A database path must name a file: SQLite's `:memory:` isn't accepted, and neither is a `sqlite:` or `file:` URI.
+Paths in the config may start with `~` and refer to environment variables, as in `$XDG_RUNTIME_DIR/atuin.sock`, or `${XDG_RUNTIME_DIR:-/tmp}/atuin.sock` to fall back to `/tmp` where the variable isn't set; write `$$` for a literal `$`. Atuin warns about a path that refers to a variable that isn't set, and uses it as written. An empty path is the setting's default. A relative path is relative to the directory holding `config.toml`, whatever directory Atuin runs in: with the default config, `socket_path = "atuin.sock"` is `~/.atuin/atuin.sock`. This holds for paths set through `ATUIN_*` environment variables too. A database path may also be SQLite's `:memory:`, or a `sqlite:` or `file:` URI, which SQLite opens as written.
 
 Upgrading from older versions
 
@@ -923,7 +923,11 @@ enabled = true
 
 Default: `false`
 
-Automatically start and manage the daemon when needed. This isn't compatible with `systemd_socket = true`. If a legacy experimental daemon is already running, restart it manually once before using autostart.
+Automatically start and manage the daemon when needed. This isn't compatible with `systemd_socket = true`. If a legacy experimental daemon is already running, restart it manually once before using autostart. On macOS, when you're logged in graphically, Atuin runs the daemon as a launchd agent at `~/Library/LaunchAgents/sh.atuin.daemon.plist`, and macOS tells you it added a background item the first time. With `ATUIN_HOME` or `ATUIN_CONFIG_DIR` set, Atuin starts the daemon itself instead.
+
+The agent is listed as `atuin` in System Settings, under General > Login Items. Switched off there, Atuin leaves it off and works without the daemon until you switch it back on. If the agent won't start, `daemon.stderr.log` in Atuin's logs directory says why. The agent gets the environment variables your config's paths use, such as `HISTDIR` for `db_path = "$HISTDIR/history.db"`, with the values they had when Atuin installed it. After you add one, run `atuin daemon restart`.
+
+`atuin daemon stop` stops the agent, but with `autostart` on, the next command that needs the daemon starts it again. `atuin config disable daemon` turns the daemon off and removes the agent.
 
 ```
 autostart = false
