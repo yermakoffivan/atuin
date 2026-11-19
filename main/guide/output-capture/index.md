@@ -1,32 +1,18 @@
 # Capturing Command Output
 
-Atuin can store what each command printed next to its history entry. You can then read it back in the inspector UI, search across it with `atuin output search`, and let [Atuin AI](https://docs.atuin.sh/ai/command-output/index.md) or other AI tools read what a command actually did.
+Atuin can store what each command printed next to its history entry. You can then read it back in the inspector UI, search across it with `atuin output search`, and let AI tools read what a command actually did.
 
 Output capture is off by default. It needs [pty-proxy](https://docs.atuin.sh/reference/pty-proxy/index.md), which sees what your terminal displays, and the [daemon](https://docs.atuin.sh/reference/daemon/index.md), which stores it.
 
 ## Setting it up
 
 ```
-atuin config enable output-capture
+atuin setup --only --output-capture --daemon
 ```
 
-This turns on the daemon (with `autostart`) if it isn't on already, enables pty-proxy and `[output]`, and restarts the daemon. Open a new shell afterward.
+This turns on the daemon (with `autostart`) if it isn't on already, enables pty-proxy and `[output]`, and restarts the daemon. Setup writes these as `daemon.enabled`, `daemon.autostart`, `pty_proxy.enabled` and `output.enabled` in your config file. Output capture also needs Atuin to capture your shell history, which `--shell-history` turns on. Open a new shell afterward.
 
-To do the same by hand, add to your config file:
-
-```
-[daemon]
-enabled = true
-autostart = true
-
-[pty_proxy]
-enabled = true
-
-[output]
-enabled = true
-```
-
-If you manage the daemon yourself (systemd, `launchd`), restart it after changing `[output]`. See [`[pty_proxy]`](https://docs.atuin.sh/reference/pty-proxy/#initialization) for other ways to start pty-proxy.
+If you manage the daemon yourself (systemd, `launchd`), restart it after running setup. See [`[pty_proxy]`](https://docs.atuin.sh/reference/pty-proxy/#initialization) for other ways to start pty-proxy.
 
 ## Reading captured output
 
@@ -44,7 +30,6 @@ atuin output search connection refused
 
 ### From AI tools
 
-- [Atuin AI](https://docs.atuin.sh/ai/command-output/index.md) reads a command's output when you ask it why something failed.
 - Claude Code, Cursor, and other agents can read and search it through Atuin's [MCP server](https://docs.atuin.sh/ai/mcp/index.md).
 
 ## What gets captured
@@ -66,7 +51,6 @@ When a command prints more than [`max_output_size`](https://docs.atuin.sh/config
 - Recognised credentials in the output (API keys, tokens, private keys, passwords in URLs and connection strings, values assigned to names like `DB_PASSWORD`) are replaced with `****` before storage, while [`secrets_filter`](https://docs.atuin.sh/configuration/config/#secrets_filter) is on (the default). Add patterns of your own with [`redact_patterns`](https://docs.atuin.sh/configuration/config/#redact_patterns). This is best-effort: it only knows common formats, and misses a credential that colour codes split apart. Output that can't be redacted quickly isn't stored.
 - For a command that prints secrets, don't rely on redaction: add it to [`command_filter`](https://docs.atuin.sh/configuration/config/#command_filter) to keep it in your history but never store its output. See [Keeping secrets out](https://docs.atuin.sh/guide/excluding-commands/#a-commands-output-command_filter).
 - Captured output stays on your machine. **It isn't synced**, even with [sync](https://docs.atuin.sh/guide/sync/index.md) set up. We're actively working on supporting this.
-- Atuin AI only sends output to the LLM when it asks for a specific command's output, and asks your permission first by default. See [Reading Command Output](https://docs.atuin.sh/ai/command-output/#permissions).
 
 ## Storage and retention
 
@@ -74,7 +58,7 @@ Output is stored on disk in the `output-capture` directory of Atuin's data direc
 
 - **Disk budget.** Output may use up to [`max_disk_usage`](https://docs.atuin.sh/configuration/config/#max_disk_usage), 10% of the disk by default. The daemon checks about once a minute; past 95% of the budget, it deletes the oldest output until usage is back to 90%.
 - **Deleting history deletes output.** Deleting an entry from the search UI, with `atuin search --delete`, `atuin history prune`, or `atuin history dedup` also deletes its output.
-- **Turning it off.** Set `[output] enabled = false`. The daemon stops storing output right away; open a new shell so pty-proxy stops capturing it too. Output already stored stays on disk; to remove it, stop the daemon and delete the `output-capture` directory.
+- **Turning it off.** Run `atuin setup --only --no-output-capture`, which sets `output.enabled = false`. The daemon stops storing output right away; open a new shell so pty-proxy stops capturing it too. Output already stored stays on disk; to remove it, stop the daemon and delete the `output-capture` directory.
 
 ## When changes take effect
 
